@@ -11,6 +11,45 @@ def extract(v, t, x_shape):
     out = torch.gather(v, index=t, dim=0).float()
     return out.view([t.shape[0]] + [1] * (len(x_shape) - 1))
 
+class GaussianDiffusion_distillation_Trainer(nn.Module):
+    def __init__(self, T_model, S_model, beta_1, beta_T, T):
+        super().__init__()
+
+        self.T_model = T_model  # Teacher model
+        self.S_model = S_model  # Student model
+        self.T = T
+        
+        self.T_model.eval()
+        
+        self.register_buffer(
+            'betas', torch.linspace(beta_1, beta_T, T).double())
+        alphas = 1. - self.betas
+        alphas_bar = torch.cumprod(alphas, dim=0)
+
+        # Calculations for diffusion q(x_t | x_{t-1}) and others
+        self.register_buffer(
+            'sqrt_alphas_bar', torch.sqrt(alphas_bar))
+        self.register_buffer(
+            'sqrt_one_minus_alphas_bar', torch.sqrt(1. - alphas_bar))
+
+    def forward(self, x_t):
+        """
+        Perform the forward pass for knowledge distillation.
+        """
+        
+        t = torch.full((x_t.shape[0],), self.T-1, device=x_t.device)
+        
+        # Teacher model forward pass (in evaluation mode)
+        with torch.no_grad():
+            teacher_output = self.T_model(x_t, t)
+
+        # Student model forward pass
+        student_output = self.S_model(x_t, t)
+
+        # Calculate the MSE loss between teacher and student outputs
+        loss = F.mse_loss(student_output, teacher_output, reduction='mean')
+
+        return loss
 
 class GaussianDiffusionTrainer(nn.Module):
     def __init__(self, model, beta_1, beta_T, T):
