@@ -232,6 +232,20 @@ class UNet(nn.Module):
 
         assert len(hs) == 0
         return h
+    
+    def extract_feature(self, x, t):
+        temb = self.time_embedding(t)
+        # Downsampling
+        h = self.head(x)
+        hs = [h]
+        for layer in self.downblocks:
+            h = layer(h, temb)
+            hs.append(h)
+        # Middle
+        for layer in self.middleblocks:
+            h = layer(h, temb)
+
+        return h
 
 
 if __name__ == '__main__':
