@@ -102,6 +102,35 @@ class distillation_cache_Trainer(nn.Module):
 
         return x_t_
     
+    def p_mean_variance_T(self, x_t, t):
+        # below: only log_variance is used in the KL computations
+        model_log_var = {
+            # for fixedlarge, we set the initial (log-)variance like so to
+            # get a better decoder log likelihood
+            'fixedlarge': torch.log(torch.cat([self.posterior_var[1:2],
+                                               self.betas[1:]])),
+            'fixedsmall': self.posterior_log_var_clipped,
+        }[self.var_type]
+        model_log_var = extract(model_log_var, t, x_t.shape)
+
+        # Mean parameterization
+        if self.mean_type == 'xprev':       # the model predicts x_{t-1}
+            x_prev = self.T_model(x_t, t)
+            x_0 = self.predict_xstart_from_xprev(x_t, t, xprev=x_prev)
+            model_mean = x_prev
+        elif self.mean_type == 'xstart':    # the model predicts x_0
+            x_0 = self.T_model(x_t, t)
+            model_mean, _ = self.q_mean_variance(x_0, x_t, t)
+        elif self.mean_type == 'epsilon':   # the model predicts epsilon
+            eps = self.T_model(x_t, t)
+            x_0 = self.predict_xstart_from_eps(x_t, t, eps=eps)
+            model_mean, _ = self.q_mean_variance(x_0, x_t, t)
+        else:
+            raise NotImplementedError(self.mean_type)
+        x_0 = torch.clip(x_0, -1., 1.)
+
+        return model_mean, model_log_var
+    
     def teacher_sampling(self, x_T, i):
         """
         Algorithm 2.
@@ -109,7 +138,7 @@ class distillation_cache_Trainer(nn.Module):
         x_t = x_T
         for time_step in reversed(range(i, self.T)):
             t = x_t.new_ones([x_T.shape[0], ], dtype=torch.long) * time_step
-            mean, log_var = self.p_mean_variance(x_t=x_t, t=t)
+            mean, log_var = self.p_mean_variance_T(x_t=x_t, t=t)
             # no noise when t == 0
             if time_step > 0:
                 noise = torch.randn_like(x_t)

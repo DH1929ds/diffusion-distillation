@@ -380,19 +380,19 @@ def distill_caching_random():
 
     ###### prepare cache ######
     
-    img_cache = torch.randn(FLAGS.batch_size*1000, 3, FLAGS.img_size, FLAGS.img_size).to(device)
-    t_cache = torch.ones(FLAGS.batch_size*1000, dtype=torch.long, device=device)*(FLAGS.T-1)
+    img_cache = torch.randn(64*1000, 3, FLAGS.img_size, FLAGS.img_size).to(device)
+    t_cache = torch.ones(64*1000, dtype=torch.long, device=device)*(FLAGS.T-1)
 
     for i in range(FLAGS.T):
         
-        start_idx = (i * FLAGS.batch_size)
-        end_idx = start_idx + FLAGS.batch_size
+        start_idx = (i * 64)
+        end_idx = start_idx + 64
 
         x_t = img_cache[start_idx:end_idx]
         t = t_cache[start_idx:end_idx]
 
         img_cache[start_idx:end_idx] = trainer.teacher_sampling(x_t, i)
-        t_cache[start_idx:end_idx] = torch.ones(FLAGS.batch_size, dtype=torch.long, device=device)*(i)
+        t_cache[start_idx:end_idx] = torch.ones(64, dtype=torch.long, device=device)*(i)
 
         if i % 100 == 0:  # 예를 들어, 100 스텝마다 시각화
             visualize_t_cache_distribution(t_cache)
