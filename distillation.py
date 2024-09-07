@@ -48,6 +48,7 @@ flags.DEFINE_integer('batch_size', 128, help='batch size')
 flags.DEFINE_integer('num_workers', 4, help='workers of Dataloader')
 flags.DEFINE_float('ema_decay', 0.9999, help="ema decay rate")
 flags.DEFINE_bool('parallel', False, help='multi gpu training')
+flags.DEFINE_bool('distill_features', False, help='perform knowledge distillation using intermediate features')
 # Logging & Sampling
 flags.DEFINE_string('logdir', './logs/DDPM_CIFAR10_EPS', help='log directory')
 flags.DEFINE_integer('sample_size', 32, "sampling size of images")
@@ -359,7 +360,7 @@ def distill_caching_random():
 
     trainer = distillation_cache_Trainer(
         teacher_model, student_model, FLAGS.beta_1, FLAGS.beta_T, FLAGS.T,
-        FLAGS.mean_type, FLAGS.var_type).to(device)
+        FLAGS.mean_type, FLAGS.var_type, FLAGS.distill_features).to(device)
     joint_sampler = GaussianDiffusion_joint_Sampler(
         teacher_model, student_model, FLAGS.beta_1, FLAGS.beta_T, FLAGS.T, FLAGS.img_size,
         FLAGS.mean_type, FLAGS.var_type).to(device)
@@ -448,10 +449,10 @@ def distill_caching_random():
             t = t_cache[indices]
 
             # Calculate distillation loss
-            loss, x_t_ = trainer(x_t, t)
+            output_loss, x_t_, total_loss = trainer(x_t, t)
 
             # Backward and optimize
-            loss.backward()
+            total_loss.backward()
             torch.nn.utils.clip_grad_norm_(student_model.parameters(), FLAGS.grad_clip)
             optim.step()
             sched.step()
@@ -483,8 +484,11 @@ def distill_caching_random():
                 visualize_t_cache_distribution(t_cache)
 
             # Logging with WandB
-            wandb.log({'distill_loss': loss.item()}, step=step)
-            pbar.set_postfix(distill_loss='%.3f' % loss.item())
+            wandb.log({
+                'distill_loss': total_loss.item(),
+                'output_loss': output_loss.item()
+                       }, step=step)
+            pbar.set_postfix(distill_loss='%.3f' % total_loss.item())
              
             # Sample and save student outputs
             if FLAGS.sample_step > 0 and step % FLAGS.sample_step == 0:

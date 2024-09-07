@@ -13,7 +13,7 @@ def extract(v, t, x_shape):
 
 class distillation_cache_Trainer(nn.Module):
     def __init__(self, T_model, S_model, beta_1, beta_T, T,
-                 mean_type='eps', var_type='fixedlarge'):
+                 mean_type='eps', var_type='fixedlarge', distill_features = False):
         
         assert mean_type in ['xprev' 'xstart', 'epsilon']
         assert var_type in ['fixedlarge', 'fixedsmall']
@@ -24,6 +24,7 @@ class distillation_cache_Trainer(nn.Module):
         self.T = T
         self.mean_type = mean_type
         self.var_type = var_type
+        self.distill_features = distill_features
         
         self.T_model.eval()
 
@@ -161,13 +162,32 @@ class distillation_cache_Trainer(nn.Module):
         """
         Perform the forward pass for knowledge distillation.
         """
+        if self.distill_features :
+            # Teacher model forward pass (in evaluation mode)
+            with torch.no_grad():
+                teacher_output, teacher_features = self.T_model.forward_features(x_t, t)
 
-        # Teacher model forward pass (in evaluation mode)
-        with torch.no_grad():
-            teacher_output = self.T_model(x_t, t)
+            # Student model forward pass
+            student_output, student_features = self.S_model.forward_features(x_t, t)
+            
+            output_loss = F.mse_loss(student_output, teacher_output, reduction='mean')
+            
+            feature_loss = 0
+            for student_feature, teacher_feature in zip(student_features, teacher_features):
+                feature_loss += F.mse_loss(student_feature, teacher_feature, reduction='mean')
+                
+            total_loss = output_loss + feature_loss / len(student_features)
+                
+        else:
+            # Teacher model forward pass (in evaluation mode)
+            with torch.no_grad():
+                teacher_output = self.T_model(x_t, t)
 
-        # Student model forward pass
-        student_output = self.S_model(x_t, t)
+            # Student model forward pass
+            student_output = self.S_model(x_t, t)
+            
+            output_loss = F.mse_loss(student_output, teacher_output, reduction='mean')
+            total_loss = output_loss
         
         x_0 = self.predict_xstart_from_eps(x_t, t, eps=teacher_output)
         mean, _ = self.q_mean_variance(x_0, x_t, t)
@@ -184,9 +204,9 @@ class distillation_cache_Trainer(nn.Module):
         noise = torch.randn_like(x_t)
         x_t = mean + torch.exp(0.5 * log_var) * noise
 
-        loss = F.mse_loss(student_output, teacher_output, reduction='mean')
+        
 
-        return loss, x_t
+        return output_loss, x_t, total_loss
     
 
 class GaussianDiffusion_distillation_Trainer(nn.Module):

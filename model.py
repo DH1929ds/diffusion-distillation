@@ -233,6 +233,36 @@ class UNet(nn.Module):
         assert len(hs) == 0
         return h
     
+    def forward_features(self, x, t):
+        # Timestep embedding
+        temb = self.time_embedding(t)
+        # Downsampling
+        h = self.head(x)
+        hs = [h]
+        features = []  # List to store intermediate features
+        for layer in self.downblocks:
+            h = layer(h, temb)
+            hs.append(h)
+            features.append(h)  # Store the feature
+
+        # Middle
+        for layer in self.middleblocks:
+            h = layer(h, temb)
+            features.append(h)  # Store the middle feature
+
+        # Upsampling
+        for layer in self.upblocks:
+            if isinstance(layer, ResBlock):
+                h = torch.cat([h, hs.pop()], dim=1)
+            h = layer(h, temb)
+            if isinstance(layer, ResBlock):
+                features.append(h)  # Store the upsampled feature
+
+        h = self.tail(h)
+
+        assert len(hs) == 0
+        return h, features  # Return the final output and intermediate features
+    
     def extract_feature(self, x, t):
         temb = self.time_embedding(t)
         # Downsampling

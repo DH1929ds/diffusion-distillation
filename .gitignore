@@ -3,6 +3,8 @@
 stats
 data
 logs
+cache_test
+wandb
 
 .python-version
 __pycache__
