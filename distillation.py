@@ -51,7 +51,7 @@ flags.DEFINE_bool('parallel', False, help='multi gpu training')
 # Logging & Sampling
 flags.DEFINE_string('logdir', './logs/DDPM_CIFAR10_EPS', help='log directory')
 flags.DEFINE_integer('sample_size', 32, "sampling size of images")
-flags.DEFINE_integer('sample_step', 1000, help='frequency of sampling')
+flags.DEFINE_integer('sample_step', 10000, help='frequency of sampling')
 # WandB 관련 FLAGS 추가
 flags.DEFINE_string('wandb_project', 'distill_caching_ddpm', help='WandB project name')
 flags.DEFINE_string('wandb_run_name', None, help='WandB run name')
@@ -59,7 +59,7 @@ flags.DEFINE_string('wandb_notes', '', help='Notes for the WandB run')
 
 # Evaluation
 flags.DEFINE_integer('save_step', 5000, help='frequency of saving checkpoints, 0 to disable during training')
-flags.DEFINE_integer('eval_step', 10000, help='frequency of evaluating model, 0 to disable during training')
+flags.DEFINE_integer('eval_step', 100000, help='frequency of evaluating model, 0 to disable during training')
 flags.DEFINE_integer('num_images', 50000, help='the number of generated images for evaluation')
 flags.DEFINE_bool('fid_use_torch', False, help='calculate IS and FID on gpu')
 flags.DEFINE_string('fid_cache', './stats/cifar10.train.npz', help='FID cache')
