@@ -12,6 +12,7 @@ from torchvision import transforms
 from tqdm import trange
 import matplotlib.pyplot as plt
 from tqdm import tqdm
+import time
 
 from diffusion import GaussianDiffusion_distillation_Trainer, GaussianDiffusionTrainer, GaussianDiffusionSampler, distillation_cache_Trainer, GaussianDiffusion_joint_Sampler
 from model import UNet
@@ -56,6 +57,8 @@ flags.DEFINE_integer('eval_step', 0, help='frequency of evaluating model, 0 to d
 flags.DEFINE_integer('num_images', 50000, help='the number of generated images for evaluation')
 flags.DEFINE_bool('fid_use_torch', False, help='calculate IS and FID on gpu')
 flags.DEFINE_string('fid_cache', './stats/cifar10.train.npz', help='FID cache')
+#Caching
+flags.DEFINE_integer('cache_n', 64, help='size of caching data per timestep')
 
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
@@ -301,10 +304,17 @@ def visualize_t_cache_distribution(t_cache):
     plt.title('Distribution of t_cache')
     plt.xlabel('Values')
     plt.ylabel('Frequency')
+    plt.ylim(0, 1000)
     plt.grid(True)
     plt.savefig('/home/dohyun/kdh/diffusion_distillation/cache_test/temp_frame.png')
     plt.close()
-    
+
+def log_gpu_usage():
+    # 현재 사용 중인 메모리와 예약된 메모리를 출력
+    print(f"GPU Memory Allocated: {torch.cuda.memory_allocated() / 1024 ** 2:.2f} MB")
+    print(f"GPU Memory Reserved: {torch.cuda.memory_reserved() / 1024 ** 2:.2f} MB")
+
+
 def distill_caching_random():
 
     # Initialize TensorBoard writer
@@ -380,21 +390,26 @@ def distill_caching_random():
 
     ###### prepare cache ######
     
-    img_cache = torch.randn(64*1000, 3, FLAGS.img_size, FLAGS.img_size).to(device)
-    t_cache = torch.ones(64*1000, dtype=torch.long, device=device)*(FLAGS.T-1)
+    img_cache = torch.randn(FLAGS.cache_n*1000, 3, FLAGS.img_size, FLAGS.img_size).to(device)
+    t_cache = torch.ones(FLAGS.cache_n*1000, dtype=torch.long, device=device)*(FLAGS.T-1)
 
-    for i in range(FLAGS.T):
-        
-        start_idx = (i * 64)
-        end_idx = start_idx + 64
+    with torch.no_grad():
+        for i in range(FLAGS.T):
+            start_time = time.time()
+            
+            start_idx = (i * FLAGS.cache_n)
+            end_idx = start_idx + FLAGS.cache_n
 
-        x_t = img_cache[start_idx:end_idx]
-        t = t_cache[start_idx:end_idx]
+            x_t = img_cache[start_idx:end_idx]
+            t = t_cache[start_idx:end_idx]
 
-        img_cache[start_idx:end_idx] = trainer.teacher_sampling(x_t, i)
-        t_cache[start_idx:end_idx] = torch.ones(64, dtype=torch.long, device=device)*(i)
+            img_cache[start_idx:end_idx] = trainer.teacher_sampling(x_t, i)
+            t_cache[start_idx:end_idx] = torch.ones(FLAGS.cache_n, dtype=torch.long, device=device)*(i)
+            print(t_cache)
 
-        if i % 100 == 0:  # 예를 들어, 100 스텝마다 시각화
+            elapsed_time = time.time() - start_time
+            print(f"Iteration {i + 1}/{FLAGS.T} completed in {elapsed_time:.2f} seconds.")
+
             visualize_t_cache_distribution(t_cache)
 
     ##################################
@@ -402,14 +417,13 @@ def distill_caching_random():
     with trange(FLAGS.total_steps, dynamic_ncols=True) as pbar:
         for step in pbar:
             optim.zero_grad()
-            indices = torch.randperm(img_cache.size(0), device=device)
 
-            # Step 2: Shuffle img_cache and t_cache using the random indices
-            img_cache = img_cache[indices]
-            t_cache = t_cache[indices]
+            # Step 2: Randomly sample from img_cache and t_cache without shuffling
+            indices = torch.randint(0, img_cache.size(0), (FLAGS.batch_size,), device=device)
 
-            x_t = img_cache[:FLAGS.batch_size]
-            t = t_cache[:FLAGS.batch_size]
+            # Sample img_cache and t_cache using the random indices
+            x_t = img_cache[indices]
+            t = t_cache[indices]
 
             # Calculate distillation loss
             loss, x_t_ = trainer(x_t, t)
@@ -421,13 +435,13 @@ def distill_caching_random():
             sched.step()
 
             ### cache update ###
-            img_cache[:FLAGS.batch_size] = x_t_
-            t_cache[:FLAGS.batch_size] -= 1
+            img_cache[indices] = x_t_
+            t_cache[indices] -= 1
             
             num_999 = torch.sum(t_cache == (FLAGS.T - 1)).item()
 
-            if num_999 < 5:
-                missing_999 = 5 - num_999
+            if num_999 < FLAGS.cache_n:
+                missing_999 = FLAGS.cache_n - num_999
                 non_999_indices = (t_cache != (FLAGS.T - 1)).nonzero(as_tuple=True)[0]
                 t_cache[non_999_indices[:missing_999]] = FLAGS.T - 1
                 img_cache[non_999_indices[:missing_999]] = torch.randn(missing_999, 3, FLAGS.img_size, FLAGS.img_size, device=device)
