@@ -13,6 +13,7 @@ from tqdm import trange
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 import time
+import wandb
 
 from diffusion import GaussianDiffusion_distillation_Trainer, GaussianDiffusionTrainer, GaussianDiffusionSampler, distillation_cache_Trainer, GaussianDiffusion_joint_Sampler
 from model import UNet
@@ -49,11 +50,16 @@ flags.DEFINE_float('ema_decay', 0.9999, help="ema decay rate")
 flags.DEFINE_bool('parallel', False, help='multi gpu training')
 # Logging & Sampling
 flags.DEFINE_string('logdir', './logs/DDPM_CIFAR10_EPS', help='log directory')
-flags.DEFINE_integer('sample_size', 64, "sampling size of images")
+flags.DEFINE_integer('sample_size', 32, "sampling size of images")
 flags.DEFINE_integer('sample_step', 1000, help='frequency of sampling')
+# WandB 관련 FLAGS 추가
+flags.DEFINE_string('wandb_project', 'distill_caching_ddpm', help='WandB project name')
+flags.DEFINE_string('wandb_run_name', None, help='WandB run name')
+flags.DEFINE_string('wandb_notes', '', help='Notes for the WandB run')
+
 # Evaluation
 flags.DEFINE_integer('save_step', 5000, help='frequency of saving checkpoints, 0 to disable during training')
-flags.DEFINE_integer('eval_step', 0, help='frequency of evaluating model, 0 to disable during training')
+flags.DEFINE_integer('eval_step', 10000, help='frequency of evaluating model, 0 to disable during training')
 flags.DEFINE_integer('num_images', 50000, help='the number of generated images for evaluation')
 flags.DEFINE_bool('fid_use_torch', False, help='calculate IS and FID on gpu')
 flags.DEFINE_string('fid_cache', './stats/cifar10.train.npz', help='FID cache')
@@ -195,104 +201,104 @@ def prepare_dataloader():
 #     writer.close()
 
 ##### caching ####
-def distill_caching_base():
+# def distill_caching_base():
 
-    # Initialize TensorBoard writer
-    writer = SummaryWriter(log_dir=FLAGS.logdir)
+#     # Initialize TensorBoard writer
+#     writer = SummaryWriter(log_dir=FLAGS.logdir)
 
-    # Load pretrained teacher model
-    teacher_model = UNet(
-        T=FLAGS.T, ch=FLAGS.ch, ch_mult=FLAGS.ch_mult, attn=FLAGS.attn,
-        num_res_blocks=FLAGS.num_res_blocks, dropout=FLAGS.dropout).to(device)
-    ckpt = torch.load(os.path.join(FLAGS.logdir, 'ckpt.pt'))
-    teacher_model.load_state_dict(ckpt['ema_model'])
+#     # Load pretrained teacher model
+#     teacher_model = UNet(
+#         T=FLAGS.T, ch=FLAGS.ch, ch_mult=FLAGS.ch_mult, attn=FLAGS.attn,
+#         num_res_blocks=FLAGS.num_res_blocks, dropout=FLAGS.dropout).to(device)
+#     ckpt = torch.load(os.path.join(FLAGS.logdir, 'ckpt.pt'))
+#     teacher_model.load_state_dict(ckpt['ema_model'])
 
-    # Initialize student model
-    student_model = UNet(
-        T=FLAGS.T, ch=FLAGS.ch, ch_mult=FLAGS.ch_mult, attn=FLAGS.attn,
-        num_res_blocks=FLAGS.num_res_blocks, dropout=FLAGS.dropout).to(device)
+#     # Initialize student model
+#     student_model = UNet(
+#         T=FLAGS.T, ch=FLAGS.ch, ch_mult=FLAGS.ch_mult, attn=FLAGS.attn,
+#         num_res_blocks=FLAGS.num_res_blocks, dropout=FLAGS.dropout).to(device)
 
-    optim = torch.optim.Adam(student_model.parameters(), lr=FLAGS.lr)
-    sched = torch.optim.lr_scheduler.LambdaLR(optim, lr_lambda=warmup_lr)
+#     optim = torch.optim.Adam(student_model.parameters(), lr=FLAGS.lr)
+#     sched = torch.optim.lr_scheduler.LambdaLR(optim, lr_lambda=warmup_lr)
 
-    trainer = distillation_cache_Trainer(
-        teacher_model, student_model, FLAGS.beta_1, FLAGS.beta_T, FLAGS.T,
-        FLAGS.mean_type, FLAGS.var_type).to(device)
-    student_sampler = GaussianDiffusionSampler(
-        student_model, FLAGS.beta_1, FLAGS.beta_T, FLAGS.T, FLAGS.img_size,
-        FLAGS.mean_type, FLAGS.var_type).to(device)
+#     trainer = distillation_cache_Trainer(
+#         teacher_model, student_model, FLAGS.beta_1, FLAGS.beta_T, FLAGS.T,
+#         FLAGS.mean_type, FLAGS.var_type).to(device)
+#     student_sampler = GaussianDiffusionSampler(
+#         student_model, FLAGS.beta_1, FLAGS.beta_T, FLAGS.T, FLAGS.img_size,
+#         FLAGS.mean_type, FLAGS.var_type).to(device)
 
-    with trange(FLAGS.total_steps, dynamic_ncols=True) as pbar:
-        for step in pbar:
-            optim.zero_grad()
+#     with trange(FLAGS.total_steps, dynamic_ncols=True) as pbar:
+#         for step in pbar:
+#             optim.zero_grad()
 
-            time_step = 999 - step%FLAGS.T
+#             time_step = 999 - step%FLAGS.T
             
-            if time_step == 999:
-                x_t = torch.randn(FLAGS.batch_size, 3, FLAGS.img_size, FLAGS.img_size).to(device)
-            else:
-                x_t = x_t_
-            # Calculate distillation loss
-            t = x_t.new_ones([x_t.shape[0], ], dtype=torch.long) * time_step
+#             if time_step == 999:
+#                 x_t = torch.randn(FLAGS.batch_size, 3, FLAGS.img_size, FLAGS.img_size).to(device)
+#             else:
+#                 x_t = x_t_
+#             # Calculate distillation loss
+#             t = x_t.new_ones([x_t.shape[0], ], dtype=torch.long) * time_step
 
-            loss, x_t_ = trainer(x_t, t)
+#             loss, x_t_ = trainer(x_t, t)
 
-            # Backward and optimize
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(student_model.parameters(), FLAGS.grad_clip)
-            optim.step()
-            sched.step()
+#             # Backward and optimize
+#             loss.backward()
+#             torch.nn.utils.clip_grad_norm_(student_model.parameters(), FLAGS.grad_clip)
+#             optim.step()
+#             sched.step()
 
-            # Logging
-            writer.add_scalar('distill_loss', loss.item(), step)
-            pbar.set_postfix(distill_loss='%.3f' % loss.item())
+#             # Logging
+#             writer.add_scalar('distill_loss', loss.item(), step)
+#             pbar.set_postfix(distill_loss='%.3f' % loss.item())
 
-            # Sample and save student outputs
-            if FLAGS.sample_step > 0 and step % FLAGS.sample_step == 0:
-                student_model.eval()
-                with torch.no_grad():
-                    x_T = torch.randn(FLAGS.batch_size, 3, FLAGS.img_size, FLAGS.img_size).to(device)
-                    student_samples = student_sampler(x_T)
-                    grid = (make_grid(student_samples) + 1) / 2
+#             # Sample and save student outputs
+#             if FLAGS.sample_step > 0 and step % FLAGS.sample_step == 0:
+#                 student_model.eval()
+#                 with torch.no_grad():
+#                     x_T = torch.randn(FLAGS.batch_size, 3, FLAGS.img_size, FLAGS.img_size).to(device)
+#                     student_samples = student_sampler(x_T)
+#                     grid = (make_grid(student_samples) + 1) / 2
                     
-                    # Create the directory if it doesn't exist
-                    sample_dir = os.path.join(FLAGS.logdir, 'sample')
-                    os.makedirs(sample_dir, exist_ok=True)
+#                     # Create the directory if it doesn't exist
+#                     sample_dir = os.path.join(FLAGS.logdir, 'sample')
+#                     os.makedirs(sample_dir, exist_ok=True)
                     
-                    path = os.path.join(sample_dir, 'student_%d.png' % step)
-                    save_image(grid, path)
-                    writer.add_image('student_sample', grid, step)
-                student_model.train()
+#                     path = os.path.join(sample_dir, 'student_%d.png' % step)
+#                     save_image(grid, path)
+#                     writer.add_image('student_sample', grid, step)
+#                 student_model.train()
 
-            # Save student model
-            if FLAGS.save_step > 0 and step % FLAGS.save_step == 0:
-                ckpt = {
-                    'student_model': student_model.state_dict(),
-                    'sched': sched.state_dict(),
-                    'optim': optim.state_dict(),
-                    'step': step,
-                }
-                torch.save(ckpt, os.path.join(FLAGS.logdir, 'student_ckpt.pt'))
+#             # Save student model
+#             if FLAGS.save_step > 0 and step % FLAGS.save_step == 0:
+#                 ckpt = {
+#                     'student_model': student_model.state_dict(),
+#                     'sched': sched.state_dict(),
+#                     'optim': optim.state_dict(),
+#                     'step': step,
+#                 }
+#                 torch.save(ckpt, os.path.join(FLAGS.logdir, 'student_ckpt.pt'))
 
-            # Evaluate student model
-            if FLAGS.eval_step > 0 and step % FLAGS.eval_step == 0:
-                student_IS, student_FID, _ = evaluate(student_sampler, student_model)
-                metrics = {
-                    'Student_IS': student_IS[0],
-                    'Student_IS_std': student_IS[1],
-                    'Student_FID': student_FID,
-                }
-                pbar.write(
-                    "%d/%d " % (step, FLAGS.total_steps) +
-                    ", ".join('%s:%.3f' % (k, v) for k, v in metrics.items()))
-                for name, value in metrics.items():
-                    writer.add_scalar(name, value, step)
-                writer.flush()
-                with open(os.path.join(FLAGS.logdir, 'student_eval.txt'), 'a') as f:
-                    metrics['step'] = step
-                    f.write(json.dumps(metrics) + "\n")
+#             # Evaluate student model
+#             if FLAGS.eval_step > 0 and step % FLAGS.eval_step == 0:
+#                 student_IS, student_FID, _ = evaluate(student_sampler, student_model)
+#                 metrics = {
+#                     'Student_IS': student_IS[0],
+#                     'Student_IS_std': student_IS[1],
+#                     'Student_FID': student_FID,
+#                 }
+#                 pbar.write(
+#                     "%d/%d " % (step, FLAGS.total_steps) +
+#                     ", ".join('%s:%.3f' % (k, v) for k, v in metrics.items()))
+#                 for name, value in metrics.items():
+#                     writer.add_scalar(name, value, step)
+#                 writer.flush()
+#                 with open(os.path.join(FLAGS.logdir, 'student_eval.txt'), 'a') as f:
+#                     metrics['step'] = step
+#                     f.write(json.dumps(metrics) + "\n")
 
-    writer.close()
+#     writer.close()
 
 def visualize_t_cache_distribution(t_cache):
     # CPU로 이동하여 numpy 배열로 변환
@@ -306,7 +312,11 @@ def visualize_t_cache_distribution(t_cache):
     plt.ylabel('Frequency')
     plt.ylim(0, 1000)
     plt.grid(True)
-    plt.savefig('/home/dohyun/kdh/diffusion_distillation/cache_test/temp_frame.png')
+
+    # 저장할 디렉토리가 없다면 생성
+    os.makedirs('./cache_test', exist_ok=True)
+
+    plt.savefig('./cache_test/temp_frame.png')
     plt.close()
 
 def log_gpu_usage():
@@ -317,8 +327,19 @@ def log_gpu_usage():
 
 def distill_caching_random():
 
-    # Initialize TensorBoard writer
-    writer = SummaryWriter(log_dir=FLAGS.logdir)
+    # Initialize WandB
+    wandb.init(
+        project=FLAGS.wandb_project,
+        name=FLAGS.wandb_run_name,
+        notes=FLAGS.wandb_notes,
+        config={
+            "learning_rate": FLAGS.lr,
+            "architecture": "UNet",
+            "dataset": "your_dataset_name",
+            "epochs": FLAGS.total_steps,
+        }
+    )
+
 
     # Load pretrained teacher model
     teacher_model = UNet(
@@ -326,6 +347,7 @@ def distill_caching_random():
         num_res_blocks=FLAGS.num_res_blocks, dropout=FLAGS.dropout).to(device)
     ckpt = torch.load(os.path.join(FLAGS.logdir, 'ckpt.pt'))
     teacher_model.load_state_dict(ckpt['ema_model'])
+    teacher_model.eval()
 
     # Initialize student model
     student_model = UNet(
@@ -460,16 +482,15 @@ def distill_caching_random():
             if step % 100 == 0:  # 예를 들어, 100 스텝마다 시각화
                 visualize_t_cache_distribution(t_cache)
 
-             
-            # Logging
-            writer.add_scalar('distill_loss', loss.item(), step)
+            # Logging with WandB
+            wandb.log({'distill_loss': loss.item()}, step=step)
             pbar.set_postfix(distill_loss='%.3f' % loss.item())
-
+             
             # Sample and save student outputs
             if FLAGS.sample_step > 0 and step % FLAGS.sample_step == 0:
                 student_model.eval()
                 with torch.no_grad():
-                    x_T = torch.randn(FLAGS.batch_size, 3, FLAGS.img_size, FLAGS.img_size).to(device)
+                    x_T = torch.randn(FLAGS.sample_size, 3, FLAGS.img_size, FLAGS.img_size).to(device)
                     joint_samples = joint_sampler(x_T)
                     grid = (make_grid(joint_samples, nrow=16) + 1) / 2
                     
@@ -479,7 +500,7 @@ def distill_caching_random():
                     
                     path = os.path.join(sample_dir, 'joint_%d.png' % step)
                     save_image(grid, path)
-                    writer.add_image('joint_sample', grid, step)
+                    wandb.log({"joint_sample": wandb.Image(path)}, step=step)
 
                 student_model.train()
 
@@ -504,14 +525,10 @@ def distill_caching_random():
                 pbar.write(
                     "%d/%d " % (step, FLAGS.total_steps) +
                     ", ".join('%s:%.3f' % (k, v) for k, v in metrics.items()))
-                for name, value in metrics.items():
-                    writer.add_scalar(name, value, step)
-                writer.flush()
-                with open(os.path.join(FLAGS.logdir, 'student_eval.txt'), 'a') as f:
-                    metrics['step'] = step
-                    f.write(json.dumps(metrics) + "\n")
+                wandb.log(metrics, step=step)
 
-    writer.close()
+    wandb.finish()
+
 
 def main(argv):
     warnings.simplefilter(action='ignore', category=FutureWarning)
