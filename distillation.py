@@ -466,8 +466,10 @@ def distill_caching_random():
             if num_999 < FLAGS.cache_n:
                 missing_999 = FLAGS.cache_n - num_999
                 non_999_indices = (t_cache != (FLAGS.T - 1)).nonzero(as_tuple=True)[0]
-                t_cache[non_999_indices[:missing_999]] = FLAGS.T - 1
-                img_cache[non_999_indices[:missing_999]] = torch.randn(missing_999, 3, FLAGS.img_size, FLAGS.img_size, device=device)
+                random_indices = torch.randperm(non_999_indices.size(0), device=device)[:missing_999]
+                selected_indices = non_999_indices[random_indices]
+                t_cache[selected_indices] = FLAGS.T - 1
+                img_cache[selected_indices] = torch.randn(missing_999, 3, FLAGS.img_size, FLAGS.img_size, device=device)
 
             # t_cache에서 값이 0인 인덱스를 찾아 초기화
             zero_indices = (t_cache < 0).nonzero(as_tuple=True)[0]
