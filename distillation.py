@@ -482,6 +482,7 @@ def distill_caching_random():
                 img_cache[zero_indices] = trainer.diffusion(img_cache[zero_indices],t_cache[zero_indices])
 
 
+
             if step % 100 == 0:  # 예를 들어, 100 스텝마다 시각화
                 visualize_t_cache_distribution(t_cache)
 
