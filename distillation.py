@@ -521,7 +521,7 @@ def distill_caching_random():
                 torch.save(ckpt, os.path.join(FLAGS.logdir, 'student_ckpt.pt'))
 
             # Evaluate student model
-            if FLAGS.eval_step > 0 and step % FLAGS.eval_step == 0:
+            if step>0 and FLAGS.eval_step > 0 and step % FLAGS.eval_step == 0:
                 student_IS, student_FID, _ = evaluate(student_sampler, student_model)
                 metrics = {
                     'Student_IS': student_IS[0],
